@@ -1,0 +1,871 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistema Solar Interactivo</title>
+    <!-- Carga de Tailwind CSS para un diseño limpio y responsivo -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Carga de Tone.js para efectos de sonido (whoosh) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.min.js"></script>
+    <style>
+        /* Configuración global de la fuente Inter */
+        html { font-family: 'Inter', sans-serif; }
+        
+        /* Fondo temático de espacio */
+        body {
+            background-color: #0d1117; /* Gris muy oscuro, casi negro */
+            color: #e5e7eb; /* Blanco suave */
+            min-height: 100vh;
+            user-select: none; /* Evita que se seleccione texto al arrastrar */
+        }
+
+        /* Clase para las tarjetas de planetas */
+        .planet-card {
+            transition: transform 0.3s, box-shadow 0.3s;
+            cursor: default;
+        }
+        .planet-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 15px rgba(255, 255, 255, 0.05);
+        }
+
+        /* Ocultar pestañas por defecto */
+        .tab-content { display: none; }
+
+        /* Estilos y animaciones para la visualización 2D */
+        #solar-system-container {
+            position: relative;
+            background-color: #000;
+            cursor: grab; /* Indica que se puede arrastrar */
+        }
+        #solar-system-container.dragging {
+            cursor: grabbing;
+        }
+
+        /* El wrapper aplicará el pan/zoom/traslación */
+        #solar-system-wrapper {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            /* El origen 0 0 es el centro del Sol */
+            transform-origin: 0 0; 
+            transition: transform 0.05s linear; /* Para un movimiento rápido y suave */
+        }
+
+        .sun-viz, .planet-viz {
+            position: absolute;
+            border-radius: 50%;
+            cursor: pointer;
+            transition: box-shadow 0.2s, transform 0.2s;
+            z-index: 20; 
+            pointer-events: all; /* Asegura que los clics en los objetos funcionen */
+        }
+        .sun-viz:hover {
+            box-shadow: 0 0 50px #ff9800, 0 0 20px #ffeb3b;
+        }
+        .planet-viz:hover {
+            transform: scale(1.2);
+            box-shadow: 0 0 15px rgba(255, 255, 255, 0.5);
+        }
+
+        /* Estilo específico para la Tierra (agua y tierra) */
+        .earth-viz {
+            /* Simulación de océanos y continentes */
+            background-image: radial-gradient(circle at 70% 30%, #4caf50 5%, transparent 5%), 
+                              radial-gradient(circle at 30% 70%, #4caf50 5%, transparent 5%), 
+                              radial-gradient(circle at 50% 50%, #1e88e5 60%, #1565c0 100%);
+            box-shadow: 0 0 10px rgba(30, 136, 229, 0.5); 
+        }
+
+        /* Estilo base para los planetas con anillos */
+        .planet-ring-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none; 
+        }
+
+        /* Estilo para los anillos (serán ovalados) */
+        .planet-ring {
+            position: absolute;
+            border-radius: 50%;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            transform: rotateX(70deg); 
+            top: 50%;
+            left: 50%;
+            transform-style: preserve-3d;
+            box-shadow: 0 0 5px rgba(255, 255, 255, 0.2);
+            pointer-events: none;
+        }
+        
+        /* Ajuste específico para Saturno (anillos grandes) */
+        .saturn-ring-1 {
+            width: 100px; height: 30px; 
+            border-color: #fff17666;
+            transform: translate(-50%, -50%) rotateX(70deg) rotateZ(20deg);
+        }
+        .saturn-ring-2 {
+            width: 80px; height: 25px; 
+            border-color: #fff17688;
+            transform: translate(-50%, -50%) rotateX(70deg) rotateZ(20deg);
+        }
+
+        /* Ajuste específico para Urano (anillo fino) */
+        .uranus-ring {
+            width: 60px; height: 15px; 
+            border-color: #4dd0e1aa;
+            /* Urano gira de lado, rotamos el anillo casi 90 grados */
+            transform: translate(-50%, -50%) rotateX(70deg) rotateZ(80deg);
+        }
+        
+        /* Órbitas y Cinturón de Asteroides */
+        .orbit {
+            position: absolute;
+            border: 1px dashed rgba(255, 255, 255, 0.1);
+            border-radius: 50%;
+            opacity: 0.6;
+            transform: translate(-50%, -50%); 
+            pointer-events: none;
+        }
+
+        /* Estilo para los asteroides (puntos pequeños) */
+        .asteroid {
+            position: absolute;
+            background-color: #6d6d6d;
+            border-radius: 50%;
+            width: 1px;
+            height: 1px;
+            pointer-events: none;
+            opacity: 0.8;
+        }
+
+        /* Estilo para los nombres flotantes */
+        .object-name {
+            position: absolute;
+            top: -15px; /* Ajuste para colocarlo sobre el objeto */
+            left: 50%;
+            transform: translateX(-50%);
+            white-space: nowrap;
+            font-size: 0.7rem;
+            color: #ccc;
+            background-color: rgba(0, 0, 0, 0.5);
+            padding: 2px 5px;
+            border-radius: 4px;
+            z-index: 40;
+            pointer-events: none; /* No debe interferir con el clic del planeta */
+        }
+
+        /* Definición de la animación de órbita */
+        @keyframes orbit-motion {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+
+        /* Contenedor que aplica la rotación orbital */
+        .planet-container, .asteroid-container {
+            position: absolute;
+            transform-origin: 0 0; 
+            width: 1px;
+            height: 1px;
+            top: 0;
+            left: 0;
+            pointer-events: none;
+        }
+        
+        /* Estilo para el modal de detalles */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.7);
+            display: none;
+            z-index: 50;
+            place-items: center;
+        }
+    </style>
+</head>
+<body class="antialiased">
+
+    <div class="max-w-7xl mx-auto p-4 md:p-8">
+        <!-- Encabezado Principal -->
+        <header class="text-center mb-8 border-b border-yellow-500/30 pb-4">
+            <h1 class="text-5xl font-extrabold text-yellow-400 tracking-tighter">
+                Nuestro Sistema Solar
+            </h1>
+            <p class="text-gray-400 mt-2 text-lg">Un viaje cósmico a través de nuestros vecinos estelares.</p>
+        </header>
+
+        <!-- Navegación de Pestañas -->
+        <nav class="flex justify-center space-x-2 md:space-x-4 mb-8 p-2 bg-gray-800 rounded-xl shadow-lg">
+            <button id="tab-btn-inicio" onclick="showTab('inicio')" class="tab-button py-2 px-4 md:px-6 text-sm md:text-base font-semibold rounded-lg transition-colors duration-200 bg-yellow-600 hover:bg-yellow-700 text-white shadow-md">
+                Inicio
+            </button>
+            <button id="tab-btn-visualizacion" onclick="showTab('visualizacion')" class="tab-button py-2 px-4 md:px-6 text-sm md:text-base font-semibold rounded-lg transition-colors duration-200 text-gray-300 hover:bg-gray-700">
+                Visualización
+            </button>
+            <button id="tab-btn-caracteristicas" onclick="showTab('caracteristicas')" class="tab-button py-2 px-4 md:px-6 text-sm md:text-base font-semibold rounded-lg transition-colors duration-200 text-gray-300 hover:bg-gray-700">
+                Características
+            </button>
+        </nav>
+
+        <!-- Contenido de las Pestañas -->
+        <main>
+            <!-- 1. Sección de Inicio (Home) -->
+            <div id="inicio" class="tab-content">
+                <section class="bg-gray-800 p-6 md:p-10 rounded-2xl shadow-xl border border-gray-700">
+                    <h2 class="text-3xl font-bold mb-4 text-yellow-400">¡Bienvenido al Centro Galáctico!</h2>
+                    <p class="text-gray-300 leading-relaxed mb-4">
+                        El Sistema Solar es el sistema planetario que alberga a nuestro planeta, la Tierra. Toca la pestaña de **Visualización** para arrastrar, hacer zoom con la rueda o pellizco, y ver los detalles de cada cuerpo celeste.
+                    </p>
+                    <p class="text-sm font-semibold text-yellow-500/80 mt-6 pt-4 border-t border-gray-700">
+                        Este proyecto fue hecho por: <span class="text-white">Nicole Steffany Zuleta</span> y <span class="text-white">Xiomara Varon Cardozo</span> con ayuda de <span class="text-blue-400">Gemini IA</span>.
+                    </p>
+                    <div class="flex justify-center mt-8">
+                        <div class="w-24 h-24 rounded-full bg-yellow-500 flex items-center justify-center shadow-2xl shadow-yellow-500/50">
+                            <span class="text-lg font-bold text-gray-900">SOL</span>
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+            <!-- 2. Sección de Visualización (Visualization - Esquema 2D INTERACTIVO) -->
+            <div id="visualizacion" class="tab-content">
+                <section class="bg-gray-800 p-6 md:p-10 rounded-2xl shadow-xl border border-gray-700">
+                    <h2 class="text-3xl font-bold mb-4 text-yellow-400">Visualización Orbital Interactiva</h2>
+                    <p class="text-gray-300 mb-6">
+                        Arrastra el fondo para moverte libremente, usa la rueda del ratón (scroll) para hacer zoom y haz clic en los objetos celestes para ver sus detalles.
+                    </p>
+                    
+                    <!-- CONTROLES -->
+                    <div class="flex justify-center flex-wrap gap-4 mb-6 p-4 bg-gray-900 rounded-lg">
+                        <!-- Control de Movimiento -->
+                        <button id="movement-toggle-btn" onclick="toggleMovement()" class="py-2 px-4 rounded-lg bg-red-600 hover:bg-red-700 text-white font-semibold transition-colors duration-200">
+                            Pausar Movimiento
+                        </button>
+                         <!-- Control de Reinicio -->
+                        <button id="reset-view-btn" onclick="resetView()" class="py-2 px-4 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold transition-colors duration-200">
+                            Reiniciar Vista
+                        </button>
+                    </div>
+                    <!-- FIN CONTROLES -->
+
+                    <div id="solar-system-container" class="w-full h-[500px] md:h-[700px] rounded-xl overflow-hidden">
+                        <!-- Wrapper para aplicar el pan/zoom -->
+                        <div id="solar-system-wrapper" style="transform: translate(0px, 0px) scale(1);">
+                            <!-- Los objetos celestes se añadirán dinámicamente con JS -->
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+            <!-- 3. Sección de Características (Characteristics - Tarjetas de Curiosidades) -->
+            <div id="caracteristicas" class="tab-content">
+                <section class="p-4 rounded-2xl">
+                    <h2 class="text-3xl font-bold mb-6 text-yellow-400 text-center">Curiosidades de los Planetas y el Sol</h2>
+                    
+                    <div id="planets-grid" class="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                        <!-- Las tarjetas se insertarán aquí dinámicamente con JS -->
+                    </div>
+                </section>
+            </div>
+        </main>
+    </div>
+
+    <!-- Modal para mostrar detalles del objeto celeste -->
+    <div id="object-details-modal" class="modal-overlay grid">
+        <div class="bg-gray-900 p-6 md:p-8 rounded-xl shadow-2xl border-t-4 border-yellow-500 max-w-sm w-11/12 transform transition-all duration-300 scale-95 opacity-0" id="modal-content">
+            <div class="flex justify-between items-center border-b border-gray-700 pb-3 mb-4">
+                <h3 id="modal-title" class="text-2xl font-bold text-yellow-400"></h3>
+                <button onclick="closeModal()" class="text-gray-400 hover:text-white transition-colors duration-150 p-2 rounded-full hover:bg-gray-800">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                </button>
+            </div>
+            <div class="space-y-3 text-gray-300">
+                <p><strong>Lunas:</strong> <span id="modal-moons"></span></p>
+                <p><strong>Temperatura media:</strong> <span id="modal-temperature"></span></p>
+                <p><strong>Masa:</strong> <span id="modal-mass"></span></p>
+                <p><strong>Radio:</strong> <span id="modal-radius"></span></p>
+                <p class="pt-2 border-t border-gray-800"><strong>Curiosidad:</strong> <span id="modal-fact" class="italic text-yellow-200/80"></span></p>
+            </div>
+        </div>
+    </div>
+
+
+    <script>
+        // --- CONFIGURACIÓN DE DATOS DE OBJETOS CELESTES ---
+        const celestialObjects = [
+            // Sol (Estrella)
+            { name: "Sol", type: "star", color: "#ffeb3b", size: 50, distance: 0, orbitSpeed: 0,
+                mass: "1.989 x 10³⁰ kg", radius: "696,340 km", moons: "Ninguna", temperature: "5,500 °C (Superficie)",
+                fact: "Representa el 99.8% de toda la masa del Sistema Solar. Su energía tarda 8 minutos en llegar a la Tierra." },
+            // Planetas
+            { name: "Mercurio", type: "planet", color: "#b3b3b3", size: 5, distance: 100, orbitSpeed: 88,
+                mass: "0.33 x 10²⁴ kg", radius: "2,440 km", moons: "Ninguna", temperature: "-173°C a 427°C", 
+                fact: "Da la vuelta al Sol en solo 88 días terrestres, pero rota muy lento (59 días terrestres)." },
+            { name: "Venus", type: "planet", color: "#e7d9b9", size: 8, distance: 150, orbitSpeed: 225,
+                mass: "4.87 x 10²⁴ kg", radius: "6,052 km", moons: "Ninguna", temperature: "471°C", 
+                fact: "Es el planeta más caliente (471°C) y es el único que rota en sentido horario (al revés)." },
+            { name: "Tierra", type: "planet", color: "#1e88e5", size: 10, distance: 200, orbitSpeed: 365,
+                mass: "5.97 x 10²⁴ kg", radius: "6,371 km", moons: "1 (Luna)", temperature: "-89°C a 58°C",
+                fact: "El único lugar conocido con agua líquida y atmósfera apta para la vida compleja." },
+            { name: "Marte", type: "planet", color: "#e57373", size: 9, distance: 260, orbitSpeed: 687,
+                mass: "0.64 x 10²⁴ kg", radius: "3,390 km", moons: "2 (Fobos, Deimos)", temperature: "-153°C a 20°C",
+                fact: "Contiene el monte más alto conocido del sistema, Olympus Mons, un volcán inactivo." },
+            { name: "Júpiter", type: "planet", color: "#ffb74d", size: 25, distance: 350, orbitSpeed: 4333,
+                mass: "1898 x 10²⁴ kg", radius: "69,911 km", moons: "95 confirmadas", temperature: "-145°C (Nubes)",
+                fact: "Es el planeta más grande y tiene la Gran Mancha Roja, una tormenta que dura siglos." },
+            { name: "Saturno", type: "planet", color: "#fff176", size: 22, distance: 450, orbitSpeed: 10759,
+                mass: "568 x 10²⁴ kg", radius: "58,232 km", moons: "146 confirmadas", temperature: "-178°C (Nubes)",
+                fact: "Es el planeta menos denso del sistema. Si existiera una piscina gigante, flotaría en ella." },
+            { name: "Urano", type: "planet", color: "#4dd0e1", size: 15, distance: 550, orbitSpeed: 30687,
+                mass: "86.8 x 10²⁴ kg", radius: "25,362 km", moons: "27 confirmadas", temperature: "-224°C (Nubes)",
+                fact: "Gira de lado, con su eje de rotación casi paralelo a su órbita (como un barril rodando)." },
+            { name: "Neptuno", type: "planet", color: "#1976d2", size: 14, distance: 650, orbitSpeed: 60190,
+                mass: "102 x 10²⁴ kg", radius: "24,622 km", moons: "16 confirmadas", temperature: "-218°C (Nubes)",
+                fact: "Es el planeta más lejano y tiene los vientos más rápidos del Sistema Solar." },
+        ];
+
+        let synth;
+        let isMoving = false; // Estado inicial: el movimiento está pausado por defecto.
+
+        // Estado para Panning y Zoom (Valores iniciales)
+        const INITIAL_STATE = {
+            scale: 1,
+            offsetX: 0,
+            offsetY: 0,
+            isDragging: false,
+            lastX: 0,
+            lastY: 0,
+            minScale: 0.5,
+            maxScale: 5.0
+        };
+
+        const vizState = {...INITIAL_STATE}; // Copia inicial para manipulación
+
+        const wrapper = () => document.getElementById('solar-system-wrapper');
+        const container = () => document.getElementById('solar-system-container');
+        
+        // Distancia promedio para el cinturón de asteroides
+        const ASTEROID_BELT_RADIUS = 300; 
+        const ASTEROID_COUNT = 150; 
+
+        // --- MANEJO DE VISTA ---
+
+        // Función para actualizar la transformación CSS del wrapper
+        function updateTransform() {
+            if (wrapper()) {
+                wrapper().style.transform = `translate(${vizState.offsetX}px, ${vizState.offsetY}px) scale(${vizState.scale})`;
+            }
+        }
+        
+        // Reinicia el paneo, zoom y la posición orbital inicial (alineación)
+        function resetView() {
+            // 1. Reiniciar el estado de paneo y zoom
+            vizState.scale = INITIAL_STATE.scale;
+            vizState.offsetX = INITIAL_STATE.offsetX;
+            vizState.offsetY = INITIAL_STATE.offsetY;
+            updateTransform();
+            
+            // 2. Forzar la posición inicial (alineada)
+            const wasMoving = isMoving;
+            
+            // Detener el movimiento si estaba activo (para asegurar el estado inicial)
+            if (wasMoving) {
+                toggleMovement(false); // Pausa la animación
+            }
+
+            // Reinicia la animación de órbita para forzar el inicio en 0 grados
+            document.querySelectorAll('.planet-container, .asteroid-container').forEach(container => {
+                const duration = container.dataset.duration; // Obtenemos la duración original guardada
+
+                // Truco para resetear la animación CSS: Quitar y volver a aplicar la propiedad 'animation'.
+                container.style.animation = 'none';
+                container.style.transform = 'rotate(0deg)'; // Forzamos visualmente a 0deg
+
+                // Usamos requestAnimationFrame para asegurar que el navegador procese el 'none' antes de re-aplicar.
+                requestAnimationFrame(() => {
+                    if (duration) {
+                        container.style.animation = `orbit-motion ${duration} linear infinite`;
+                        container.style.transform = ''; // Limpiamos el transform inline para que la animación tome el control
+                        
+                        if (wasMoving) {
+                            toggleMovement(true); // Reinicia la animación (si estaba activa)
+                        } else {
+                            // Si estaba pausado, se reanuda y se pausa inmediatamente
+                            container.style.animationPlayState = 'paused';
+                        }
+                    }
+                });
+            });
+        }
+
+
+        // --- FUNCIÓN DE SONIDO (TONE.JS) ---
+        function initializeSynth() {
+            try {
+                // Sintetizador simple para un efecto de "whoosh" al abrir el modal
+                const noise = new Tone.Noise("white").toDestination();
+                synth = new Tone.Filter(200, "lowpass").toDestination(); 
+                noise.connect(synth);
+                noise.volume.value = -10;
+                
+            } catch (error) {
+                console.warn("AudioContext no pudo ser inicializado. El sonido no funcionará.");
+            }
+        }
+
+        // Toca el efecto de sonido "whoosh"
+        function playWhoosh() {
+            if (Tone.context.state !== 'running') {
+                Tone.start();
+            }
+
+            if (synth) {
+                synth.context.resume();
+                synth.triggerAttackRelease(20000, "0.05", Tone.now()); 
+                
+                const now = Tone.now();
+                synth.frequency.setValueAtTime(1000, now);
+                synth.frequency.linearRampToValueAtTime(100, now + 0.5);
+                
+                const noise = synth.input.sources[0];
+                if (noise) {
+                    noise.start(now);
+                    noise.stop(now + 0.5);
+                }
+            }
+        }
+
+
+        // --- FUNCIÓN DE TABS ---
+        function showTab(tabId) {
+            // Oculta todos los contenidos
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.style.display = 'none';
+            });
+
+            // Restablece el estilo de todos los botones
+            document.querySelectorAll('.tab-button').forEach(button => {
+                button.classList.remove('bg-yellow-600', 'hover:bg-yellow-700', 'text-white');
+                button.classList.add('text-gray-300', 'hover:bg-gray-700');
+            });
+
+            // Muestra el contenido seleccionado
+            const selectedContent = document.getElementById(tabId);
+            if (selectedContent) {
+                selectedContent.style.display = 'block';
+            }
+
+            // Marca el botón seleccionado
+            const selectedButton = document.getElementById(`tab-btn-${tabId}`);
+            if (selectedButton) {
+                selectedButton.classList.remove('text-gray-300', 'hover:bg-gray-700');
+                selectedButton.classList.add('bg-yellow-600', 'hover:bg-yellow-700', 'text-white');
+            }
+            
+            // Inicializa el sintetizador si el usuario entra a la visualización
+            if (tabId === 'visualizacion' && !synth) {
+                initializeSynth();
+                isMoving = false;
+                toggleMovement(false); 
+                updateTransform();
+            }
+        }
+        
+        // --- LÓGICA DE MOVIMIENTO (PLAY/PAUSE) ---
+        function toggleMovement(shouldRun) {
+            const btn = document.getElementById('movement-toggle-btn');
+            
+            // Determina el nuevo estado de movimiento
+            if (typeof shouldRun === 'boolean') {
+                isMoving = shouldRun;
+            } else {
+                isMoving = !isMoving;
+            }
+
+            // Aplica el estado de play/paused a todas las animaciones
+            document.querySelectorAll('.planet-container, .asteroid-container').forEach(container => {
+                container.style.animationPlayState = isMoving ? 'running' : 'paused';
+            });
+
+            // Actualiza el texto y el color del botón
+            if (isMoving) {
+                btn.textContent = 'Pausar Movimiento';
+                btn.classList.remove('bg-green-600');
+                btn.classList.add('bg-red-600');
+            } else {
+                btn.textContent = 'Reanudar Movimiento';
+                btn.classList.remove('bg-red-600');
+                btn.classList.add('bg-green-600');
+            }
+        }
+
+        // --- LÓGICA DEL MODAL ---
+        const modal = document.getElementById('object-details-modal');
+        const modalContent = document.getElementById('modal-content');
+
+        function showObjectDetails(objectName) {
+            playWhoosh();
+            const object = celestialObjects.find(o => o.name === objectName);
+
+            if (!object) return;
+
+            // Rellena el modal con los datos del objeto
+            document.getElementById('modal-title').textContent = object.name;
+            document.getElementById('modal-moons').textContent = object.moons;
+            document.getElementById('modal-temperature').textContent = object.temperature;
+            document.getElementById('modal-mass').textContent = object.mass;
+            document.getElementById('modal-radius').textContent = object.radius;
+            document.getElementById('modal-fact').textContent = object.fact;
+
+            // Muestra el modal con transición
+            modal.style.display = 'grid';
+            setTimeout(() => {
+                modalContent.classList.remove('scale-95', 'opacity-0');
+                modalContent.classList.add('scale-100', 'opacity-100');
+            }, 10);
+        }
+
+        function closeModal() {
+            // Oculta el modal con transición
+            modalContent.classList.remove('scale-100', 'opacity-100');
+            modalContent.classList.add('scale-95', 'opacity-0');
+            setTimeout(() => {
+                modal.style.display = 'none';
+            }, 300);
+        }
+
+        // Cerrar modal al hacer clic fuera del contenido
+        modal.addEventListener('click', (e) => {
+            if (e.target.id === 'object-details-modal') {
+                closeModal();
+            }
+        });
+
+
+        // --- SETUP INTERACCIÓN (PAN/ZOOM) ---
+        function setupInteraction() {
+            const containerEl = container();
+            if (!containerEl) return;
+            
+            // Función auxiliar para obtener coordenadas de toque o ratón
+            const getClientCoords = (e) => {
+                return e.touches ? { 
+                    clientX: e.touches[0].clientX, 
+                    clientY: e.touches[0].clientY 
+                } : { 
+                    clientX: e.clientX, 
+                    clientY: e.clientY 
+                };
+            };
+            
+            // 1. Manejo de Paneo (Arrastrar)
+            
+            function startDrag(e) {
+                // Previene arrastrar si se hace clic en un objeto celeste
+                if (e.target.closest('.sun-viz') || e.target.closest('.planet-viz')) return;
+                
+                vizState.isDragging = true;
+                const coords = getClientCoords(e);
+                vizState.lastX = coords.clientX;
+                vizState.lastY = coords.clientY;
+                containerEl.classList.add('dragging');
+
+                if (e.type === 'mousedown') {
+                    e.preventDefault(); 
+                }
+            }
+
+            function doDrag(e) {
+                if (!vizState.isDragging) return;
+                
+                const coords = getClientCoords(e);
+
+                const dx = coords.clientX - vizState.lastX;
+                const dy = coords.clientY - vizState.lastY;
+
+                vizState.offsetX += dx;
+                vizState.offsetY += dy;
+                
+                vizState.lastX = coords.clientX;
+                vizState.lastY = coords.clientY;
+                
+                updateTransform();
+                
+                if (e.cancelable) {
+                    e.preventDefault(); 
+                }
+            }
+
+            function endDrag() {
+                vizState.isDragging = false;
+                containerEl.classList.remove('dragging');
+            }
+
+            // Eventos de ratón
+            containerEl.addEventListener('mousedown', startDrag);
+            document.addEventListener('mousemove', doDrag);
+            document.addEventListener('mouseup', endDrag);
+
+            // Eventos táctiles (para móvil)
+            containerEl.addEventListener('touchstart', startDrag, { passive: false });
+            containerEl.addEventListener('touchmove', doDrag, { passive: false });
+            containerEl.addEventListener('touchend', endDrag);
+            containerEl.addEventListener('touchcancel', endDrag);
+
+            
+            // 2. Manejo de Zoom (Rueda del ratón)
+            containerEl.addEventListener('wheel', (e) => {
+                e.preventDefault(); 
+
+                const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1; // 0.9 para reducir, 1.1 para aumentar
+                let newScale = vizState.scale * zoomFactor;
+
+                // Limitar el zoom
+                newScale = Math.min(Math.max(newScale, vizState.minScale), vizState.maxScale);
+                
+                const rect = containerEl.getBoundingClientRect();
+                const mouseX = e.clientX - rect.left;
+                const mouseY = e.clientY - rect.top;
+
+                // Calcular el nuevo offset para zoom centrado en el puntero
+                vizState.offsetX = vizState.offsetX - (mouseX - vizState.offsetX) * (1 / newScale - 1 / vizState.scale);
+                vizState.offsetY = vizState.offsetY - (mouseY - vizState.offsetY) * (1 / newScale - 1 / vizState.scale);
+
+
+                vizState.scale = newScale;
+                updateTransform();
+            });
+        }
+        
+        // --- GENERACIÓN DEL CINTURÓN DE ASTEROIDES ---
+        function renderAsteroidBelt(wrapperEl) {
+            for (let i = 0; i < ASTEROID_COUNT; i++) {
+                
+                // Distancia aleatoria dentro de un rango
+                const distance = ASTEROID_BELT_RADIUS + (Math.random() * 50) - 25; 
+                // Ángulo aleatorio
+                const angle = Math.random() * 2 * Math.PI; 
+                
+                const x = distance * Math.cos(angle);
+                const y = distance * Math.sin(angle);
+                
+                const asteroidEl = document.createElement('div');
+                asteroidEl.className = 'asteroid';
+                asteroidEl.style.left = `${x}px`;
+                asteroidEl.style.top = `${y}px`;
+
+                const container = document.createElement('div');
+                container.className = 'planet-container asteroid-container';
+                
+                // Velocidad de órbita ligeramente variable
+                const speed = 20 + Math.random() * 10; 
+                const durationString = `${speed}s`; // Guardar la duración
+                container.dataset.duration = durationString;
+                
+                container.style.animation = `orbit-motion ${durationString} linear infinite`;
+                container.style.animationPlayState = isMoving ? 'running' : 'paused';
+                
+                container.appendChild(asteroidEl);
+                wrapperEl.appendChild(container);
+            }
+
+            // Órbita de referencia para el cinturón
+            const orbit = document.createElement('div');
+            orbit.className = 'orbit';
+            orbit.style.width = `${2 * ASTEROID_BELT_RADIUS}px`;
+            orbit.style.height = `${2 * ASTEROID_BELT_RADIUS}px`;
+            orbit.style.opacity = '0.3';
+            wrapperEl.appendChild(orbit);
+        }
+
+        // --- RENDERIZADO DE VISUALIZACIÓN ---
+        function renderVisualization() {
+            const wrapperEl = wrapper();
+            if (!wrapperEl) return; 
+
+            wrapperEl.innerHTML = ''; // Limpia el contenido previo
+            const sunData = celestialObjects.find(o => o.name === "Sol");
+            
+            // 1. Renderizar el Sol
+            const sunEl = document.createElement('div');
+            sunEl.className = 'sun-viz z-20 flex items-center justify-center font-bold text-gray-900 relative';
+            sunEl.style.width = `${sunData.size * 2}px`;
+            sunEl.style.height = `${sunData.size * 2}px`;
+            sunEl.style.backgroundColor = sunData.color;
+            sunEl.style.top = `${-sunData.size}px`; 
+            sunEl.style.left = `${-sunData.size}px`;
+            sunEl.onclick = () => showObjectDetails(sunData.name);
+            sunEl.innerHTML = `
+                <span class="object-name" style="top: ${-sunData.size}px; font-weight: bold; color: #ffeb3b; background-color: transparent;">
+                    ${sunData.name.toUpperCase()}
+                </span>
+            `;
+            wrapperEl.appendChild(sunEl);
+            
+            // 2. Renderizar planetas y órbitas
+            celestialObjects.filter(o => o.type === "planet").forEach(p => {
+                // Se duplica la distancia para un mejor espaciado visual en el mapa 2D
+                const orbitRadius = p.distance * 2.0; 
+                
+                // Crear la órbita (línea discontinua)
+                const orbit = document.createElement('div');
+                orbit.className = 'orbit';
+                orbit.style.width = `${2 * orbitRadius}px`;
+                orbit.style.height = `${2 * orbitRadius}px`;
+                wrapperEl.appendChild(orbit);
+
+                // Crear el contenedor que aplica la rotación
+                const planetContainer = document.createElement('div');
+                planetContainer.className = 'planet-container';
+                
+                // Velocidad de órbita (inversamente proporcional al tiempo real, pero ajustada para la visualización)
+                const duration = p.orbitSpeed / 50; 
+                const durationString = `${duration}s`; 
+                planetContainer.dataset.duration = durationString; // GUARDADO DE DURACIÓN
+                
+                planetContainer.style.animation = `orbit-motion ${durationString} linear infinite`; 
+                planetContainer.style.animationPlayState = isMoving ? 'running' : 'paused';
+
+                // Crear el planeta (el punto visual)
+                const planetEl = document.createElement('div');
+                planetEl.className = 'planet-viz z-30 relative'; 
+                
+                if (p.name === 'Tierra') {
+                    planetEl.classList.add('earth-viz');
+                } else {
+                    planetEl.style.backgroundColor = p.color;
+                }
+                
+                planetEl.style.width = `${p.size}px`; 
+                planetEl.style.height = `${p.size}px`;
+                planetEl.title = p.name;
+                planetEl.onclick = () => showObjectDetails(p.name);
+                
+                // Posicionar el planeta al final del radio de órbita
+                const planetSizeHalf = p.size / 2;
+                planetEl.style.top = `${-planetSizeHalf}px`; 
+                planetEl.style.left = `${orbitRadius - planetSizeHalf}px`; 
+                
+                // Añadir el nombre al planeta
+                planetEl.innerHTML = `<span class="object-name">${p.name}</span>`;
+
+                // Contenedor de Anillos (para Saturno y Urano)
+                const ringContainer = document.createElement('div');
+                ringContainer.className = 'planet-ring-container';
+                
+                if (p.name === 'Saturno') {
+                    ringContainer.innerHTML += `
+                        <div class="planet-ring saturn-ring-1" style="width: ${p.size * 4}px; height: ${p.size * 1.5}px;"></div>
+                        <div class="planet-ring saturn-ring-2" style="width: ${p.size * 3.5}px; height: ${p.size * 1.25}px;"></div>
+                    `;
+                } else if (p.name === 'Urano') {
+                    ringContainer.innerHTML += `
+                        <div class="planet-ring uranus-ring" style="width: ${p.size * 3}px; height: ${p.size * 0.75}px;"></div>
+                    `;
+                }
+                
+                planetEl.appendChild(ringContainer);
+                planetContainer.appendChild(planetEl);
+                wrapperEl.appendChild(planetContainer);
+            });
+            
+            // 3. Renderizar Cinturón de Asteroides
+            renderAsteroidBelt(wrapperEl);
+
+            // Aplicar el estado inicial (pausado)
+            toggleMovement(false); 
+        }
+        
+        // --- RENDERIZADO DE CARACTERÍSTICAS (CURIOSIDADES) ---
+        function renderCharacteristics() {
+            const grid = document.getElementById('planets-grid');
+            grid.innerHTML = '';
+            
+            celestialObjects.forEach(p => {
+                const card = document.createElement('div');
+                card.className = 'planet-card bg-gray-800 p-6 rounded-xl border-t-4 border-yellow-500/50 shadow-lg flex flex-col justify-between';
+                
+                // --- Lógica para el ícono/miniatura de la tarjeta ---
+                let thumbnailHTML = '';
+                const planetSize = 'w-8 h-8';
+                const planetClass = `rounded-full flex-shrink-0 ${p.name === 'Tierra' ? 'earth-viz' : ''}`;
+                const planetStyle = `background-color: ${p.name !== 'Tierra' ? p.color : ''}; box-shadow: 0 0 10px ${p.color}88; position: relative; z-index: 10;`;
+
+                if (p.name === 'Saturno' || p.name === 'Urano') {
+                    const ringColor = p.name === 'Saturno' ? '#fff176' : '#4dd0e1';
+                    const ringWidth = p.name === 'Saturno' ? '4rem' : '3rem'; 
+                    const ringHeight = p.name === 'Saturno' ? '1.5rem' : '0.5rem'; 
+                    const ringTransform = p.name === 'Saturno' ? 'rotate(-15deg)' : 'rotate(70deg)';
+                    const ringOpacity = p.name === 'Saturno' ? '0.7' : '0.9';
+
+                    thumbnailHTML = `
+                        <div class="relative flex items-center justify-center" style="width: 4rem; height: 2rem;">
+                            <!-- Anillo principal -->
+                            <div class="absolute rounded-full border"
+                                 style="
+                                     width: ${ringWidth};
+                                     height: ${ringHeight};
+                                     border-width: 2px;
+                                     border-style: solid;
+                                     border-color: ${ringColor};
+                                     opacity: ${ringOpacity};
+                                     top: 50%; left: 50%;
+                                     transform: translate(-50%, -50%) ${ringTransform}; 
+                                     z-index: 5;
+                                 ">
+                            </div>
+                            <!-- Planeta -->
+                            <div class="${planetClass} ${planetSize}" style="${planetStyle}"></div>
+                        </div>
+                    `;
+                } else {
+                    thumbnailHTML = `
+                        <div class="${planetClass} ${planetSize}" style="${planetStyle}"></div>
+                    `;
+                }
+                // --- Fin de lógica para el ícono/miniatura de la tarjeta ---
+
+
+                card.innerHTML = `
+                    <div>
+                        <div class="flex items-center space-x-4 mb-4">
+                            <!-- Miniatura del Planeta/Sol en la tarjeta -->
+                            ${thumbnailHTML}
+                            <h3 class="text-2xl font-bold text-white">${p.name}</h3>
+                        </div>
+                        <p class="text-gray-400 italic">${p.fact}</p>
+                    </div>
+                    <div class="mt-4 pt-4 border-t border-gray-700/50 space-y-1">
+                        <p class="text-sm text-gray-500 font-semibold">Datos Rápidos:</p>
+                        <p class="text-xs text-yellow-300">Lunas: ${p.moons}</p>
+                        <p class="text-xs text-yellow-300">Temperatura: ${p.temperature}</p>
+                        <p class="text-xs text-yellow-300">Masa: ${p.mass}</p>
+                        <p class="text-xs text-yellow-300">Radio: ${p.radius}</p>
+                    </div>
+                `;
+                grid.appendChild(card);
+            });
+        }
+
+        // --- INICIALIZACIÓN ---
+        window.onload = function() {
+            renderCharacteristics();
+            renderVisualization();
+            setupInteraction(); // Configura el arrastre (pan) y el zoom 
+            
+            showTab('inicio'); // Muestra la pestaña de inicio al cargar
+            
+            initializeSynth(); // Inicializa el sintetizador de sonido
+        };
+    </script>
+</body>
+</html>
+Initial commit:Solar System
